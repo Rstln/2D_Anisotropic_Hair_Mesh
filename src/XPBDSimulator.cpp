@@ -88,37 +88,39 @@ bool XPBDSimulator::solveAdaptive() {
     // =========================================================
     // 1. 产生新裂缝：检测 Level 0 底部边
     // =========================================================
-    if (m_bundle->cracks.size() == 0) {
-        for (auto& collider : m_colliders) {
-            // vtx_matrix[0] 结构: [左, 1L, 1R, 2L, 2R, ..., 右]
-            for (int j = 0; j < (int)m_bundle->vtx_matrix[0].size() - 1; j += 2) {
-                auto vL = m_bundle->vtx_matrix[0][j];
-                auto vR = m_bundle->vtx_matrix[0][j + 1];
+    for (auto& collider : m_colliders) {
+        // vtx_matrix[0] 结构: [左, 1L, 1R, 2L, 2R, ..., 右]
+        // j += 2 只检测仍然连续的横向材料区间，跳过裂缝空隙。
+        for (int j = 0; j < (int)m_bundle->vtx_matrix[0].size() - 1; j += 2) {
+            auto vL = m_bundle->vtx_matrix[0][j];
+            auto vR = m_bundle->vtx_matrix[0][j + 1];
 
-                float t_local = 0.0f;
-                if (checkSegmentCollision(vL, vR, collider, t_local)) {
-                    float raw_u = vL->u_rest + t_local * (vR->u_rest - vL->u_rest);
+            float t_local = 0.0f;
+            if (checkSegmentCollision(vL, vR, collider, t_local)) {
+                float raw_u = vL->u_rest + t_local * (vR->u_rest - vL->u_rest);
 
-                    // --- 离散化处理 (Snapping) ---
-                    // 假设 U_STEP = 0.01f，raw_u = 0.342f -> snapped_u = 0.34f
-                    float snapped_u = std::round(raw_u / U_STEP) * U_STEP;
+                // --- 离散化处理 (Snapping) ---
+                // 假设 U_STEP = 0.01f，raw_u = 0.342f -> snapped_u = 0.34f
+                float snapped_u = std::round(raw_u / U_STEP) * U_STEP;
 
-                    // 边界安全检查
-                    snapped_u = glm::clamp(snapped_u, U_STEP, 1.0f - U_STEP);
+                // 边界安全检查
+                snapped_u = glm::clamp(snapped_u, U_STEP, 1.0f - U_STEP);
 
-                    std::shared_ptr<Vertex> vL1_bound, vR1_bound;
-                    // 使用我们之前写的辅助函数在第 1 层定位 snapped_u 所在的区间
-                    findBoundsInLayer(1, snapped_u, vL1_bound, vR1_bound);
-
-                    // --- 唯一性检查 ---
-                    if (m_bundle->cracks.find(snapped_u) == m_bundle->cracks.end()) {
-                        m_bundle->cracks.emplace(std::piecewise_construct,
-                            std::forward_as_tuple(snapped_u),
-                            std::forward_as_tuple(snapped_u, m_bundle->vpool, vL, vR, vL1_bound, vR1_bound, m_bundle->num_layers));
-
-                        topologyChanged = true;
-                    }
+                // --- 唯一性检查 ---
+                // 允许多个障碍物在不同 u 位置触发裂缝，但同一个 snapped u 只创建一次。
+                if (m_bundle->cracks.find(snapped_u) != m_bundle->cracks.end()) {
+                    continue;
                 }
+
+                std::shared_ptr<Vertex> vL1_bound, vR1_bound;
+                // 在第 1 层定位 snapped_u 所在的区间，作为初始共享尖端的参考边界。
+                findBoundsInLayer(1, snapped_u, vL1_bound, vR1_bound);
+
+                m_bundle->cracks.emplace(std::piecewise_construct,
+                    std::forward_as_tuple(snapped_u),
+                    std::forward_as_tuple(snapped_u, m_bundle->vpool, vL, vR, vL1_bound, vR1_bound, m_bundle->num_layers));
+
+                topologyChanged = true;
             }
         }
     }
@@ -159,14 +161,11 @@ bool XPBDSimulator::solveAdaptive() {
             }
 
             // 几何角度检查
-            auto tmp_angle = calculateOpeningAngle(crack);
             if (!shouldExtend && calculateOpeningAngle(crack) > ANGLE_THRESHOLD) {
                 shouldExtend = true;
             }
 
             if (shouldExtend) {
-                float r_ref = m_colliders.empty() ? 0.1f : m_colliders[0]->radius;
-
                 // 修改 Crack::goUpOnce 的签名，传入两层边界
                 // 确保旧层分裂时对齐当前层，新层创建时对齐下一层
                 if (crack.goUpOnce(vL_curr, vR_curr, vL_next, vR_next)) {
@@ -618,7 +617,7 @@ void XPBDSimulator::findBoundsInLayer(int level, float u, std::shared_ptr<Vertex
     const auto& layer = m_bundle->vtx_matrix[level];
     const float EPS = 1e-5f;
 
-    for (size_t j = 0; j < layer.size() - 1; ++j) {
+    for (int j = 0; j < layer.size() - 1; ++j) {
         // 使用 EPS 包含边界，确保能够找到匹配的区间
         if (u >= layer[j]->u_rest - EPS && u <= layer[j+1]->u_rest + EPS) {
             outL = layer[j];
