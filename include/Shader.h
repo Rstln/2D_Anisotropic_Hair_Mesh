@@ -19,6 +19,7 @@ public:
     mutable std::unordered_map<std::string, int> location_cache;
 
     Shader(const char* vertexPath, const char* fragmentPath, const char* geometryPath = nullptr);
+    ~Shader();
     void use();
     void setBool(const std::string& name, bool value) const;
     void setInt(const std::string& name, int value) const;

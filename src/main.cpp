@@ -1,249 +1,269 @@
 #include <iostream>
+#include <vector>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <filesystem>
+#include <algorithm>
+
+// OpenGL includes
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
+
+// GLM includes
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+// Project includes
 #include "XPBDSimulator.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 // ================================= global parameter =================================
 
 const unsigned int SCR_WIDTH = 600;
 const unsigned int SCR_HEIGHT = 600;
-Collider* mouseCollider = nullptr;
+const float FIXED_DT = 1.0f / 500.0f;
+const int MAX_STEPS = 200;
 
 // ================================= bundle data =================================
-std::vector<std::array<Vertex, 2>> bd_data() {
-    std::array<Vertex, 2> l1 = {
-            Vertex(glm::vec3(-0.5f, 0.5f, 0.0f)),
-            Vertex(glm::vec3(0.5f, 0.5f, 0.0f)),
-    };
+std::vector<glm::vec3> left_corners = {
+    glm::vec3(-0.5f, -0.5f, 0.0f), glm::vec3(-0.5f, -0.25f, 0.0f),
+    glm::vec3(-0.5f, 0.0f, 0.0f),  glm::vec3(-0.5f, 0.25f, 0.0f),
+    glm::vec3(-0.5f, 0.5f, 0.0f),
+};
 
-    std::array<Vertex, 2> l2 = {
-            Vertex(glm::vec3(-0.5f, 0.25f, 0.0f)),
-            Vertex(glm::vec3(0.5f, 0.25f, 0.0f)),
-    };
+std::vector<glm::vec3> right_corners = {
+    glm::vec3(0.5f, -0.5f, 0.0f), glm::vec3(0.5f, -0.25f, 0.0f),
+    glm::vec3(0.5f, 0.0f, 0.0f),  glm::vec3(0.5f, 0.25f, 0.0f),
+    glm::vec3(0.5f, 0.5f, 0.0f),
+};
 
-    std::array<Vertex, 2> l3 = {
-            Vertex(glm::vec3(-0.5f, -0.0f, 0.0f)),
-            Vertex(glm::vec3(0.5f, -0.0f, 0.0f)),
-    };
-
-    std::array<Vertex, 2> l4 = {
-            Vertex(glm::vec3(-0.5f, -0.25f, 0.0f)),
-            Vertex(glm::vec3(0.5f, -0.25f, 0.0f)),
-    };
-
-    std::array<Vertex, 2> l5 = {
-            Vertex(glm::vec3(-0.5f, -0.5f, 0.0f)),
-            Vertex(glm::vec3(0.5f, -0.5f, 0.0f)),
-    };
-
-    std::vector<std::array<Vertex, 2>> lys;
-    lys.push_back(std::move(l1));
-    lys.push_back(std::move(l2));
-    lys.push_back(std::move(l3));
-    lys.push_back(std::move(l4));
-    lys.push_back(std::move(l5));
-    return lys;
-}
-
-
-// ================================= aux functions for OpenGL =================================
-void cursor_position_callback(GLFWwindow* window, double xpos, double ypos);
+// ================================= aux functions =================================
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow *window);
+bool saveFramebufferPNG(const std::string& path, int width, int height);
 
-void DrawDebugGrid() {
-    // 使用 static 变量，确保所有资源只被创建和初始化一次。
-    static GLuint gridProgramID = 0;
-    static GLuint gridVAO = 0;
-    static int vertexCount = 0;
-
-    // 检查 programID 是否为0。如果为0，说明是第一次调用此函数，需要初始化所有资源。
-    if (gridProgramID == 0) {
-        // 1. --- 一次性设置：编译着色器 ---
-        const char* vertexSource = R"(
-            #version 330 core
-            layout (location = 0) in vec3 aPos;
-            void main() {
-                gl_Position = vec4(aPos, 1.0);
-            }
-        )";
-
-        const char* fragmentSource = R"(
-            #version 330 core
-            out vec4 FragColor;
-            void main() {
-                // 颜色直接硬编码为蓝色
-                FragColor = vec4(0.2f, 0.4f, 0.8f, 1.0f);
-            }
-        )";
-
-        // -- 编译过程 --
-        GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &vertexSource, NULL);
-        glCompileShader(vs);
-        // 简单错误检查
-        int success;
-        char infoLog[512];
-        glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            glGetShaderInfoLog(vs, 512, NULL, infoLog);
-            std::cerr << "ERROR::GRID_SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+int main(int argc, char** argv) {
+    bool captureMode = false;
+    std::string capturePath = "../output/preview.png";
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--capture") {
+            captureMode = true;
+        } else if (arg == "--capture-path" && i + 1 < argc) {
+            captureMode = true;
+            capturePath = argv[++i];
         }
-
-        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &fragmentSource, NULL);
-        glCompileShader(fs);
-        glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            glGetShaderInfoLog(fs, 512, NULL, infoLog);
-            std::cerr << "ERROR::GRID_SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
-        }
-
-        gridProgramID = glCreateProgram();
-        glAttachShader(gridProgramID, vs);
-        glAttachShader(gridProgramID, fs);
-        glLinkProgram(gridProgramID);
-        glGetProgramiv(gridProgramID, GL_LINK_STATUS, &success);
-        if (!success) {
-            glGetProgramInfoLog(gridProgramID, 512, NULL, infoLog);
-            std::cerr << "ERROR::GRID_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
-        }
-        glDeleteShader(vs);
-        glDeleteShader(fs);
-
-
-        // 2. --- 一次性设置：创建网格顶点数据和缓冲区 ---
-        std::vector<glm::vec3> vertices;
-        float step = 0.1f;
-        const float z_depth = 0.999f; // 确保在背景
-
-        for (float i = -1.0f; i <= 1.0f; i += step) {
-            vertices.push_back(glm::vec3(i, -1.0f, z_depth));
-            vertices.push_back(glm::vec3(i,  1.0f, z_depth));
-            vertices.push_back(glm::vec3(-1.0f, i, z_depth));
-            vertices.push_back(glm::vec3( 1.0f, i, z_depth));
-        }
-        vertexCount = vertices.size();
-
-        GLuint gridVBO = 0;
-        glGenVertexArrays(1, &gridVAO);
-        glGenBuffers(1, &gridVBO);
-        glBindVertexArray(gridVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), &vertices[0], GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
     }
 
-    // --- 每帧执行的绘制部分 ---
-    glUseProgram(gridProgramID);
-    glBindVertexArray(gridVAO);
-    glDrawArrays(GL_LINES, 0, vertexCount);
-    glBindVertexArray(0);
-}
-
-
-
-int main() {
-    // ================================= init glfw =================================
+    // 1. Init GLFW
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    #endif
 
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "hair2d", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Two Colliders Test", nullptr, nullptr);
     if (window == nullptr) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSetCursorPosCallback(window, cursor_position_callback);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
-    // ================================= init glad =================================
+    // 2. Init GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // ================= Init Data =================
+    VPool vpool;
+    Bundle bd1(&vpool, left_corners, right_corners, 7);
 
-    // ================================= init data =================================
-    auto layers1 = bd_data();
-    Bundle bd1(std::move(layers1), 5);
+    // [修改 1] 定义两个 Collider
+    // ---------------------------------------------------------
+    // 左边的大球: x=-0.2, 半径=0.1
+    glm::vec3 posLeft(-0.2f, -0.8f, 0.0f);
+    Collider colLeft(posLeft, 0.1f);
 
+    // 右边的小球: x=0.3, 半径=0.05
+    glm::vec3 posRight(0.3f, -0.7f, 0.0f);
+    Collider colRight(posRight, 0.07f);
 
-    Collider local_collider(glm::vec3(0.0f, -0.85f, 0.0f), 0.1f);
-    mouseCollider = &local_collider;
+    // 加入模拟器
+    std::vector<Collider*> colliders = { &colLeft, &colRight };
+    XPBDSimulator simulator(&bd1, colliders);
 
-    XPBDSimulator simulator(&bd1, &local_collider);
+    // ================= Init Shaders =================
+    Shader frame_shader("../shaders/shader.vert", "../shaders/shader.frag");
+    bd1.f_shader = &frame_shader;
 
+    Shader strand_shader("../shaders/vis_shader.vert", "../shaders/vis_shader.frag");
+    bd1.s_shader = &strand_shader;
 
-    // ================================= init shaders =================================
-    Shader strand_shader("../shaders/shader.vert", "../shaders/shader.frag");
-    Shader frame_shader("../shaders/shader.vert", "../shaders/shader_b.frag");
-    bd1.hShader = &strand_shader;
-    bd1.fShader = &frame_shader;
+    Shader collider_shader("../shaders/collider_shader.vert", "../shaders/shader.frag");
+    colLeft.m_shader = &collider_shader;
+    colRight.m_shader = &collider_shader;
 
-    Shader collider_shader("../shaders/collider_shader.vert", "../shaders/collider_shader.frag");
-    local_collider.m_shader = &collider_shader;
+    // ================= 统计输出 & 动画定义 =================
+    std::ofstream csvFile("../output/stats_two_colliders.txt");
+    if (csvFile.is_open()) {
+        csvFile << "Time,Sum_C_Length_Sq,Sum_C_Angle_Sq\n";
+    }
 
-    // ================================= initial state =================================
-    //simulator.addVel();
+    // 动画控制 Lambda
+    auto updateColliderUpward = [](Collider& col, glm::vec3 basePos, float jumpHeight,
+                                   float duration, float startTime, float currentTime) {
+        float elapsed = currentTime - startTime;
+        glm::vec3 newPos = basePos;
 
-    // ================================= rendering loop =================================
+        // 在持续时间内执行正弦波运动 (0 -> 1 -> 0)
+        if (elapsed > 0.0f && elapsed < duration) {
+            float angle = (elapsed / duration) * 3.1415926f; // map to [0, PI]
+            float yOffset = jumpHeight * std::sin(angle);
+            newPos.y += yOffset;
+        }
+        col.setPosition(newPos);
+    };
+
+    // 动画参数配置
+    float animHeight = 1.0f;
+    float animDuration = 8.0f;
+    float animStartTime = 1.0f;
+
+    float lastTime = glfwGetTime();
+    float accumulator = 0.0f;
+    bool captured = false;
+    bool capturePrepared = false;
+
+    // ================= Rendering Loop =================
     while(!glfwWindowShouldClose(window)) {
+        float currentTime = glfwGetTime();
+        float frameTime = currentTime - lastTime;
+        lastTime = currentTime;
+        if (frameTime > 0.25f) frameTime = 0.25f;
+        accumulator += frameTime;
+
         processInput(window);
 
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-        float aspectRatio = (width > 0 && height > 0) ? (float)width / (float)height : 1.0f;
-        glm::mat4 projection = glm::ortho(-aspectRatio, aspectRatio, -1.0f, 1.0f, -1.0f, 1.0f);
-        if (mouseCollider) {
-            mouseCollider->draw(projection);
+        if (captureMode && !capturePrepared) {
+            const int warmupSteps = 450;
+            for (int i = 0; i < warmupSteps; ++i) {
+                float simTime = i * FIXED_DT;
+                updateColliderUpward(colLeft, posLeft, animHeight, animDuration, animStartTime, simTime);
+                updateColliderUpward(colRight, posRight, animHeight, animDuration, animStartTime, simTime);
+                simulator.substep();
+            }
+            currentTime = warmupSteps * FIXED_DT;
+            capturePrepared = true;
         }
 
-        simulator.substep();
+        glClearColor(0.95f, 0.95f, 0.95f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Projection
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        float aspectRatio = (width > 0 && height > 0) ? (float)width / height : 1.0f;
+        glm::mat4 projection = glm::ortho(-aspectRatio, aspectRatio, -1.0f, 1.0f, -1.0f, 1.0f);
+
+        // [修改 2] 更新两个 Collider 的位置
+        updateColliderUpward(colLeft, posLeft, animHeight, animDuration, animStartTime, currentTime);
+        updateColliderUpward(colRight, posRight, animHeight, animDuration, animStartTime, currentTime);
+
+        // 绘制 Colliders
+        colLeft.draw(projection);
+        colRight.draw(projection);
+
+        // Physics Step
+        if (!captureMode) {
+            int stepCount = 0;
+            while (accumulator >= FIXED_DT && stepCount < MAX_STEPS) {
+                simulator.substep();
+                accumulator -= FIXED_DT;
+                stepCount++;
+            }
+        }
+
+        // ================= 统计与显示 =================
+        // float lenErr = simulator.computeTotalLengthCSq();
+        // float angErr = simulator.computeTotalAngleCSq();
+        //
+        // // 写文件
+        // if (csvFile.is_open()) {
+        //     csvFile << currentTime << "," << lenErr << "," << angErr << "\n";
+        // }
+        //
+        // // 更新标题栏
+        // std::stringstream ss;
+        // ss << "Time: " << std::fixed << std::setprecision(2) << currentTime << "s"
+        //    << " | LenErr: " << std::setprecision(5) << lenErr
+        //    << " | AngErr: " << std::setprecision(5) << angErr;
+        // glfwSetWindowTitle(window, ss.str().c_str());
+
+        // Draw Hair
+        bd1.f_shader->use();
+        bd1.f_shader->setMat4("u_projection", projection);
+        bd1.s_shader->use();
+        bd1.s_shader->setMat4("u_projection", projection);
         bd1.draw();
 
-        // swap buffers
+        if (captureMode && !captured) {
+            if (saveFramebufferPNG(capturePath, width, height)) {
+                std::cout << "Saved capture to " << capturePath << std::endl;
+            } else {
+                std::cout << "Failed to save capture to " << capturePath << std::endl;
+            }
+            captured = true;
+            glfwSetWindowShouldClose(window, true);
+        }
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    mouseCollider = nullptr;
+    if (csvFile.is_open()) csvFile.close();
     glfwTerminate();
-
     return 0;
 }
 
-
+// Aux functions
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
-
 void processInput(GLFWwindow *window) {
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 }
 
+bool saveFramebufferPNG(const std::string& path, int width, int height) {
+    if (width <= 0 || height <= 0) return false;
 
-void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
-    int width, height;
-    glfwGetWindowSize(window, &width, &height);
+    std::filesystem::path outPath(path);
+    if (!outPath.parent_path().empty()) {
+        std::filesystem::create_directories(outPath.parent_path());
+    }
 
-    float aspectRatio = (width > 0 && height > 0) ? (float)width / (float)height : 1.0f;
+    std::vector<unsigned char> pixels(width * height * 3);
+    std::vector<unsigned char> flipped(width * height * 3);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
 
-    // 将鼠标屏幕坐标转换为 [-aspectRatio, aspectRatio] x [-1, 1]
-    float norm_x = (float)xpos / width;     // [0, 1]
-    float norm_y = (float)ypos / height;    // [0, 1]
+    const int stride = width * 3;
+    for (int y = 0; y < height; ++y) {
+        std::copy_n(&pixels[(height - 1 - y) * stride], stride, &flipped[y * stride]);
+    }
 
-    float world_x = norm_x * 2.0f * aspectRatio - aspectRatio;
-    float world_y = (1.0f - norm_y) * 2.0f - 1.0f;
-
-    mouseCollider->setPosition(glm::vec3(world_x, world_y, 0.0f));
+    return stbi_write_png(path.c_str(), width, height, 3, flipped.data(), stride) != 0;
 }

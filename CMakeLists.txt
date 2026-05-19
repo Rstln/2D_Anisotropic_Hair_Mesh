@@ -27,6 +27,15 @@ add_executable(hair2d external/glad/src/glad.c
         include/Bundle.h
         src/Bundle.cpp
         src/XPBDSimulator.cpp
+        include/GeometryHelpers.h
+        src/GeometryHelpers.cpp
+        include/CrackNode.h
+        src/CrackNode.cpp
+        include/Crack.h
+        src/Crack.cpp
+        include/VPool.h
+        src/VPool.cpp
+        include/stb_image_write.h
 )
 
 

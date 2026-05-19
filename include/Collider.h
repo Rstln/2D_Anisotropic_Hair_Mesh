@@ -2,6 +2,7 @@
 #define HAIR2D_COLLIDER_H
 
 #include "Shader.h"
+#include "GeometryHelpers.h"
 
 class Collider {
 public:
@@ -20,9 +21,10 @@ public:
 
 
     float radius;
-    glm::vec4 color{glm::vec4(1.0f, 1.0f,1.0f,  1.0f)};
+    glm::vec4 lineColor{glm::vec4(0.0f, 0.0f,1.0f,  1.0f)};
+    float thickness{0.1f};
+    std::vector<float> m_fatCircleVertices;
     unsigned int m_VAO{0}, m_VBO{0};
-    int m_VertexCount{0};
     Shader* m_shader{nullptr};
 
     void setupMesh();

@@ -1,0 +1,12 @@
+.DS_Store
+external/.DS_Store
+external/glad/.DS_Store
+
+cmake-build-*/
+build/
+
+output/*.png
+output/*.txt
+!output/preview.png
+
+.idea/

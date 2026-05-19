@@ -76,6 +76,11 @@ Shader::Shader(const char *vertexPath, const char *fragmentPath, const char* geo
 
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
+    if (geometryShader != 0) glDeleteShader(geometryShader);
+}
+
+Shader::~Shader() {
+    if (ID != 0) glDeleteProgram(ID);
 }
 
 void Shader::use() {

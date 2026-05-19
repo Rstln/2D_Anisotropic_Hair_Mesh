@@ -17,12 +17,16 @@ public:
     glm::vec3 velocity{glm::vec3(0.0f, 0.0f,0.0f)};
     glm::vec3 normal{glm::vec3(0.0f, 0.0f,0.0f)};
     float invMass{1.0f};
+    float u_rest{0.0f};
+    float u{0.0f};
 
-    explicit Vertex(const glm::vec3& pos, float mass = 1.0f);
+    explicit Vertex(float u, const glm::vec3& pos, float mass = 1.0f);
 
     Vertex(Vertex&&) noexcept = default;
 
     Vertex& operator=(const Vertex& other);
+
+    Vertex(const Vertex& other) = default;
 };
 
 
